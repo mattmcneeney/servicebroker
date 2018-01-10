@@ -255,11 +255,23 @@ For error responses, the following fields are valid:
 | Response Field | Type | Description |
 | --- | --- | --- |
 | error | string | A single word uniquely identifying the error condition. |
-| description | string | A meaningful error message explaining why the request failed. |
+| description | string | A meaningful error message explaining why the request failed. | 
 
-Note that there are failure scenarios described throughout this specification
-for which the `error` field must contain a specific string (see
-[Asynchronous operations](#asynchronous-operations) for an example).
+### Error Codes
+
+There are failure scenarios described throughout this specification for which
+the `error` field must contain a specific string. Those error codes are well
+understood for Service Brokers. Service Broker Authors are encuraged to use
+these error codes for applicable error responses. Broker Authors are not
+limited by this list, these are provided for the common cases to aid in Broker
+to Platform integrations.
+
+| Error            | Reason | Expected Action |
+| ---------------- | ------ | --------------- |
+| AsyncRequired    | This request requires client support for asynchronous service operations. | The query parameter `accepts_incomplete=true` MUST be included the request. |
+| ConcurrencyError | The Service Broker does not support concurrent requests that mutate the same resource. | Clients should wait until pending requests have compleate for the specified resources. |
+| RequiresApp      | Service Broker requires that `app_guid` be included in the request body. | Include `app_guid` in the request body. |
+
 
 ## Catalog Management
 
@@ -586,16 +598,13 @@ Note: Asynchronous operations are currently supported only for provision,
 update, and deprovision.
 
 For a Service Broker to return an asynchronous response, the query parameter
-`accepts_incomplete=true` MUST be included the request. If the parameter is
-not included or is set to `false`, and the Service Broker cannot fulfil the
-request synchronously (guaranteeing that the operation is complete on
-response), then the Service Broker SHOULD reject the request with the status
-code `422 Unprocessable Entity` and the following field in the response body:
-```
-{
-  "error": "AsyncRequired"
-}
-```
+`accepts_incomplete=true` MUST be included the request. If the parameter is not
+included or is set to `false`, and the Service Broker cannot fulfil the request
+synchronously (guaranteeing that the operation is complete on response), then
+the Service Broker SHOULD reject the request with the status code `422
+Unprocessable Entity` and a response body containing error code "AsyncRequired"
+(see [Service Broker Errors](#service-broker-errors) for more details).
+
 
 If the query parameter described above is present, and the Service Broker
 executes the request asynchronously, the Service Broker MUST return the
@@ -611,27 +620,21 @@ operation.
 
 ## Blocking Operations
 
-Service Brokers do not have to support concurrent requests that mutate the
-same resource.  If a Service Broker receives a request that it is not
-able to process due to other activity being done on that resource then the
-Service Broker MUST reject the request with a HTTP `422 Unprocessable
-Entity` and the following field in the body:
-
-```
-{
-  "error": "ConcurrencyError"
-}
-```
+Service Brokers do not have to support concurrent requests that mutate the same
+resource. If a Service Broker receives a request that it is not able to process
+due to other activity being done on that resource then the Service Broker MUST
+reject the request with a HTTP `422 Unprocessable Entity` and a response body
+containing error code "ConcurrencyError" (see [Service Broker
+Errors](#service-broker-errors) for more details).
 
 Note that per the [Orphans](#orphans) section, this error response does not
-cause orphan mitigation to be initiated. Therefore, Platforms receiving
-this error response SHOULD resend the request at a later time.
+cause orphan mitigation to be initiated. Therefore, Platforms receiving this
+error response SHOULD resend the request at a later time.
 
-Brokers MAY choose to treat the creation of a binding as a mutation of
-the corresponding Service Instance - it is an implementation choice. Doing
-so would cause Platforms to serialize multiple binding creation requests
-when they are directed at the same Service Instance if concurrent updates
-are not supported.
+Brokers MAY choose to treat the creation of a binding as a mutation of the
+corresponding Service Instance - it is an implementation choice. Doing so would
+cause Platforms to serialize multiple binding creation requests when they are
+directed at the same Service Instance if concurrent updates are not supported.
 
 ## Polling Last Operation
 
@@ -639,16 +642,15 @@ When a Service Broker returns status code `202 Accepted` for
 [Provision](#provisioning), [Update](#updating-a-service-instance), or
 [Deprovision](#deprovisioning), the Platform will begin polling the
 `/v2/service_instances/:instance_id/last_operation` endpoint to obtain the
-state of the last requested operation. The Service Broker response MUST
-contain the field `state` and MAY contain the field `description`.
+state of the last requested operation. The Service Broker response MUST contain
+the field `state` and MAY contain the field `description`.
 
 Valid values for `state` are `in progress`, `succeeded`, and `failed`. The
 Platform will poll the `last_operation` endpoint as long as the Service Broker
-returns `"state": "in progress"`. Returning `"state": "succeeded"` or
-`"state": "failed"` will cause the Platform to cease polling. The value
-provided for `description` will be passed through to the Platform API client
-and can be used to provide additional detail for users about the progress of
-the operation.
+returns `"state": "in progress"`. Returning `"state": "succeeded"` or `"state":
+"failed"` will cause the Platform to cease polling. The value provided for
+`description` will be passed through to the Platform API client and can be used
+to provide additional detail for users about the progress of the operation.
 
 ### Request
 
@@ -818,7 +820,7 @@ $ curl http://username:password@service-broker-url/v2/service_instances/:instanc
 | 202 Accepted | MUST be returned if the Service Instance provisioning is in progress. This triggers the Platform to poll the [Service Instance Last Operation Endpoint](#polling-last-operation) for operation status. Note that a re-sent `PUT` request MUST return a `202 Accepted`, not a `200 OK`, if the Service Instance is not yet fully provisioned. |
 | 400 Bad Request | MUST be returned if the request is malformed or missing mandatory data. |
 | 409 Conflict | MUST be returned if a Service Instance with the same id already exists but with different attributes. |
-| 422 Unprocessable Entity | MUST be returned if the Service Broker only supports asynchronous provisioning for the requested plan and the request did not include `?accepts_incomplete=true`. The response body MUST contain `{ "error": "AsyncRequired" }`. |
+| 422 Unprocessable Entity | MUST be returned if the Service Broker only supports asynchronous provisioning for the requested plan and the request did not include `?accepts_incomplete=true`. The response body MUST contain a response body containing error code "AsyncRequired" (see [Service Broker Errors](#service-broker-errors)). |
 
 Responses with any other status code will be interpreted as a failure and a
 deprovision request MUST be sent to the Service Broker to prevent an orphan
@@ -970,7 +972,7 @@ $ curl http://username:password@service-broker-url/v2/service_instances/:instanc
 | 200 OK | MUST be returned if the request's changes have been applied. The expected response body is `{}`. |
 | 202 Accepted | MUST be returned if the Service Instance update is in progress. This triggers the Platform to poll the [Last Operation](#polling-last-operation) for operation status. Note that a re-sent `PATCH` request MUST return a `202 Accepted`, not a `200 OK`, if the requested update has not yet completed. |
 | 400 Bad Request | MUST be returned if the request is malformed or missing mandatory data. |
-| 422 Unprocessable entity | MUST be returned if the requested change is not supported or if the request cannot currently be fulfilled due to the state of the Service Instance (e.g. Service Instance utilization is over the quota of the requested plan). Additionally, a `422 Unprocessable Entity` can also be returned if the Service Broker only supports asynchronous update for the requested plan and the request did not include `?accepts_incomplete=true`; in this case the response body MUST contain `{ "error": "AsyncRequired" }`. |
+| 422 Unprocessable entity | MUST be returned if the requested change is not supported or if the request cannot currently be fulfilled due to the state of the Service Instance (e.g. Service Instance utilization is over the quota of the requested plan). Additionally, a `422 Unprocessable Entity` can also be returned if the Service Broker only supports asynchronous update for the requested plan and the request did not include `?accepts_incomplete=true`; in this case the response body MUST contain a error code "AsyncRequired" (see [Service Broker Errors](#service-broker-errors)). |
 
 Responses with any other status code will be interpreted as a failure.
 
@@ -1161,7 +1163,7 @@ $ curl http://username:password@service-broker-url/v2/service_instances/:instanc
 | 201 Created | MUST be returned if the binding was created as a result of this request. The expected response body is below. |
 | 400 Bad Request | MUST be returned if the request is malformed or missing mandatory data. |
 | 409 Conflict | MUST be returned if a Service Binding with the same id, for the same Service Instance, already exists but with different parameters. Additionally, if the Service Broker rejects the request due to a concurrent request to create a binding for the same Service Instance, then this error MUST be returned (see [Blocking Operations](#blocking-operations)). |
-| 422 Unprocessable Entity | MUST be returned if the Service Broker requires that `app_guid` be included in the request body. The response body MUST contain `{ "error": "RequiresApp" }`. |
+| 422 Unprocessable Entity | MUST be returned if the Service Broker requires that `app_guid` be included in the request body. The response body MUST contain error code "RequiresApp" (see [Service Broker Errors](#service-broker-errors)). |
 
 Responses with any other status code will be interpreted as a failure and an
 unbind request MUST be sent to the Service Broker to prevent an orphan being
@@ -1355,8 +1357,8 @@ $ curl 'http://username:password@service-broker-url/v2/service_instances/:instan
 | 200 OK | MUST be returned if the Service Instance was deleted as a result of this request. The expected response body is `{}`. |
 | 202 Accepted | MUST be returned if the Service Instance deletion is in progress. This triggers the Platform to poll the [Service Instance Last Operation Endpoint](#polling-last-operation) for operation status. Note that a re-sent `DELETE` request MUST return a `202 Accepted`, not a `200 OK`, if the delete request has not completed yet. |
 | 400 Bad Request | MUST be returned if the request is malformed or missing mandatory data. |
-| 410 Gone | MUST be returned if the Service Instance does not exist. The expected response body is `{}`. |
-| 422 Unprocessable Entity | MUST be returned if the Service Broker only supports asynchronous deprovisioning for the requested plan and the request did not include `?accepts_incomplete=true`. The response body MUST contain `{ "error": "AsyncRequired" }`. |
+| 410 Gone | MUST be returned if the Service Instance does not exist. |
+| 422 Unprocessable Entity | MUST be returned if the Service Broker only supports asynchronous deprovisioning for the requested plan and the request did not include `?accepts_incomplete=true`. The response body MUST contain error code "AsyncRequired" (see [Service Broker Errors](#service-broker-errors)). |
 
 Responses with any other status code will be interpreted as a failure and the
 Platform MUST remember the Service Instance.
